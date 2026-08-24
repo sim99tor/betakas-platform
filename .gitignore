@@ -1,0 +1,20 @@
+bin/
+obj/
+
+# React
+node_modules/
+client/dist/
+
+*.user
+
+# Sırlar — depoya girmemeli
+appsettings.Development.json
+appsettings.Local.json
+.dev-jwt-key
+
+.vercel
+.env*
+
+# curl/test artiklari (calisirken tekrar olusabiliyor)
+server/Betakas.Api/token.txt
+server/Betakas.Api/state.json

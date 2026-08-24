@@ -1,0 +1,17 @@
+# Derleme ciktilari — imaj Vercel tarafinda sifirdan uretilir
+**/bin
+**/obj
+**/node_modules
+client/dist
+
+# Yerel sirlar
+.dev-jwt-key
+appsettings.Development.json
+appsettings.Local.json
+
+# Eski tek dosyalik arayuz (React kullaniliyor)
+web/
+
+# Yerel yardimci betikler
+baslat.ps1
+supabase-kur.ps1

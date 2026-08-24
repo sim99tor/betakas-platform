@@ -1,0 +1,48 @@
+# Betakas — Vercel Functions icin OCI imaji.
+#
+# Vercel .NET'i yerel bir runtime olarak desteklemez, ama Dockerfile.vercel ile rastgele
+# container calistirir. Bu imaj React arayuzunu ve .NET API'yi birlikte uretir; API
+# derlenmis SPA'yi da servis ettigi icin tek servis yeterlidir (CORS gerekmez).
+#
+# Not: Vercel imaji kendi tarafinda derler, bu makinede Docker kurulu olmasi gerekmez.
+
+# ---------- 1) React arayuzu ----------
+FROM node:22-alpine AS client
+WORKDIR /src/client
+
+# Once manifest: bagimliliklar degismedikce bu katman onbellekten gelir.
+COPY client/package*.json ./
+RUN npm ci
+
+COPY client/ ./
+RUN npm run build
+
+# ---------- 2) .NET API ----------
+FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS api
+WORKDIR /src
+
+COPY server/Betakas.Api/Betakas.Api.csproj server/Betakas.Api/
+RUN dotnet restore server/Betakas.Api/Betakas.Api.csproj
+
+COPY server/Betakas.Api/ server/Betakas.Api/
+RUN dotnet publish server/Betakas.Api/Betakas.Api.csproj \
+    -c Release -o /app/publish --no-restore
+
+# ---------- 3) Calisma imaji ----------
+FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine AS final
+WORKDIR /app
+
+COPY --from=api /app/publish ./
+
+# Arayuz imajin icine kopyalanir; yeri Ui__Root ile acikca bildirilir.
+COPY --from=client /src/client/dist ./wwwroot
+ENV Ui__Root=/app/wwwroot
+
+# Vercel container'in HTTP sunucusunu $PORT uzerinde acmasini bekler (varsayilan 80).
+ENV ASPNETCORE_ENVIRONMENT=Production
+ENV PORT=80
+EXPOSE 80
+
+# Kestrel'i $PORT'a bagla. Sabit yazmak yerine calisma aninda cozulur ki
+# Vercel farkli bir port verirse de calissin.
+CMD ASPNETCORE_URLS="http://+:${PORT}" dotnet Betakas.Api.dll
