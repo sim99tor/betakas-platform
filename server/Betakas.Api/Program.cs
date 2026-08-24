@@ -37,21 +37,10 @@ if (!useSqlServer)
 // Migration setleri context tipine bağlıdır; her sağlayıcı kendi türetilmiş context'ini
 // kullanır, uygulama kodu ise her zaman soyut BetakasDbContext'i görür.
 if (useSqlServer)
-{
     builder.Services.AddDbContext<BetakasDbContext, SqlServerDbContext>(o => o.UseSqlServer(connectionString));
-    builder.Services.AddSingleton<IBetakasContextFactory>(sp =>
-        new SqlServerContextFactory(
-            new DbContextOptionsBuilder<SqlServerDbContext>().UseSqlServer(connectionString).Options));
-}
 else
-{
     builder.Services.AddDbContext<BetakasDbContext, PostgresDbContext>(o =>
         o.UseNpgsql(connectionString, x => x.EnableRetryOnFailure(3, TimeSpan.FromSeconds(5), null)));
-    // State toplarken paralel sorgu icin ayri context uretecek fabrika.
-    builder.Services.AddSingleton<IBetakasContextFactory>(sp =>
-        new PostgresContextFactory(
-            new DbContextOptionsBuilder<PostgresDbContext>().UseNpgsql(connectionString).Options));
-}
 
 // State onbellegi surec omru boyunca yasar; sunucu tek yazar oldugu icin guvenli.
 builder.Services.AddSingleton<StateCache>();

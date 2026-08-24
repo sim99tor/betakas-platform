@@ -8,12 +8,18 @@ namespace Betakas.Api.Services;
 /// State'i okumaya adanmış servis. Yazma yolu bilinçli olarak yoktur: her değişiklik
 /// kendi domain ucundan geçer (bkz. <c>DomainEndpoints</c>), böylece kurallar sunucuda uygulanır.
 ///
-/// Uzak bir veritabanında gecikme baskındır, bu yüzden iki iyileştirme uygulanır:
-///   1. Önbellek — rev değişmediyse veri de değişmemiştir; tek bir ucuz rev sorgusu yeter.
-///   2. Paralel toplama — önbellek ıskalandığında dokuz tablo ayrı bağlantılardan aynı anda
-///      okunur, böylece toplam süre dokuz sorgunun toplamı değil, en yavaşı kadar olur.
+/// Uzak bir veritabanında gecikme baskındır; bunu tek bir iyileştirme karşılar: önbellek —
+/// sunucu tek yazardır ve her eylem <c>rev</c>'i artırır, dolayısıyla rev değişmediyse veri
+/// de değişmemiştir. Sayfa yüklemeleri tek bir ucuz rev sorgusuna iner.
+///
+/// Önbellek ıskalandığında dokuz tablo TEK bağlantı üzerinden sırayla okunur. Bilerek paralel
+/// değildir: Supabase'in session pooler'ı istemci başına eşzamanlı bağlantı sayısını sınırlar
+/// (nano örnekte 15) ve dokuz ayrı bağlantı bu sınırı fazlasıyla aşıp
+/// "(EMAXCONNSESSION) max clients reached" hatasına, ardından EF'in yeniden deneme
+/// gecikmelerine yol açar. Sıralı sorgu bu riski taşımaz; önbellek zaten çoğu isteği
+/// karşıladığı için maliyeti sınırlıdır.
 /// </summary>
-public class StateService(BetakasDbContext db, IBetakasContextFactory factory, StateCache cache)
+public class StateService(BetakasDbContext db, StateCache cache)
 {
     public async Task<StateDto> GetStateAsync(string? authUserId)
     {
@@ -32,23 +38,16 @@ public class StateService(BetakasDbContext db, IBetakasContextFactory factory, S
         return snapshot;
     }
 
-    /// <summary>Her sorgu kendi context'inde çalışır; tek DbContext eşzamanlı kullanılamaz.</summary>
-    private async Task<T> QueryAsync<T>(Func<BetakasDbContext, Task<T>> query)
-    {
-        await using var context = factory.Create();
-        return await query(context);
-    }
-
     private async Task<StateSnapshot> BuildSnapshotAsync()
     {
-        var stateTask = QueryAsync(c => c.PlatformState.AsNoTracking().FirstAsync(x => x.Id == 1));
+        var st = await db.PlatformState.AsNoTracking().FirstAsync(x => x.Id == 1);
 
         // IBAN ayrı toplanır: önbellek ortak olduğu için kişiye özel alan içeremez.
-        var ibansTask = QueryAsync(c => c.Users.AsNoTracking()
+        var ibans = await db.Users.AsNoTracking()
             .Select(u => new { u.Id, u.Iban })
-            .ToDictionaryAsync(x => x.Id, x => x.Iban));
+            .ToDictionaryAsync(x => x.Id, x => x.Iban);
 
-        var usersTask = QueryAsync(c => c.Users.AsNoTracking().OrderBy(u => u.Id)
+        var users = await db.Users.AsNoTracking().OrderBy(u => u.Id)
             .Select(u => new UserDto
             {
                 Id = u.Id, Name = u.Name, Initials = u.Initials, Email = u.Email,
@@ -63,16 +62,16 @@ public class StateService(BetakasDbContext db, IBetakasContextFactory factory, S
                         RenewsAt = u.SubscriptionRenewsAt,
                         Active = u.SubscriptionActive
                     }
-            }).ToListAsync());
+            }).ToListAsync();
 
-        var versionsTask = QueryAsync(c => c.Versions.AsNoTracking().OrderBy(v => v.CreatedAt)
+        var versions = await db.Versions.AsNoTracking().OrderBy(v => v.CreatedAt)
             .Select(v => new VersionDto
             {
                 Id = v.Id, OwnerId = v.OwnerId, Label = v.Label, Url = v.Url,
                 CreatedAt = v.CreatedAt, Notes = v.Notes, Fixes = v.Fixes
-            }).ToListAsync());
+            }).ToListAsync();
 
-        var requestsTask = QueryAsync(c => c.Requests.AsNoTracking().OrderBy(r => r.CreatedAt)
+        var requests = await db.Requests.AsNoTracking().OrderBy(r => r.CreatedAt)
             .Select(r => new RequestDto
             {
                 Id = r.Id, OwnerId = r.OwnerId, VersionId = r.VersionId, Title = r.Title, Url = r.Url,
@@ -80,9 +79,9 @@ public class StateService(BetakasDbContext db, IBetakasContextFactory factory, S
                 Scenario = r.Scenario, Credits = r.Credits, Slots = r.Slots,
                 Visibility = r.Visibility, Status = r.Status, CreatedAt = r.CreatedAt,
                 Boosted = r.Boosted, BoostedAt = r.BoostedAt
-            }).ToListAsync());
+            }).ToListAsync();
 
-        var sessionsTask = QueryAsync(c => c.Sessions.AsNoTracking().OrderBy(s => s.Id)
+        var sessions = await db.Sessions.AsNoTracking().OrderBy(s => s.Id)
             .Select(s => new SessionDto
             {
                 Id = s.Id, RequestId = s.RequestId, TesterId = s.TesterId, Status = s.Status,
@@ -90,42 +89,36 @@ public class StateService(BetakasDbContext db, IBetakasContextFactory factory, S
                 OwnerRating = s.OwnerRating, DurationMin = s.DurationMin, ProofUrl = s.ProofUrl,
                 Feedback = s.Feedback, DisputeNote = s.DisputeNote,
                 DisputeOutcome = s.DisputeOutcome, CashPaid = s.CashPaid
-            }).ToListAsync());
+            }).ToListAsync();
 
-        var ledgerTask = QueryAsync(c => c.Ledger.AsNoTracking().OrderBy(l => l.Ts)
+        var ledger = await db.Ledger.AsNoTracking().OrderBy(l => l.Ts)
             .Select(l => new LedgerDto
             {
                 Id = l.Id, Ts = l.Ts, From = l.From, To = l.To,
                 Amount = l.Amount, Type = l.Type, Ref = l.Ref, Note = l.Note
-            }).ToListAsync());
+            }).ToListAsync();
 
-        var cashTask = QueryAsync(c => c.CashLedger.AsNoTracking().OrderBy(x => x.Ts)
+        var cashLedger = await db.CashLedger.AsNoTracking().OrderBy(x => x.Ts)
             .Select(x => new CashLedgerDto
             {
                 Id = x.Id, Ts = x.Ts, From = x.From, To = x.To,
                 Amount = x.Amount, Type = x.Type, Ref = x.Ref, Note = x.Note
-            }).ToListAsync());
+            }).ToListAsync();
 
-        var purchasesTask = QueryAsync(c => c.Purchases.AsNoTracking().OrderBy(p => p.Ts)
+        var purchases = await db.Purchases.AsNoTracking().OrderBy(p => p.Ts)
             .Select(p => new PurchaseDto
             {
                 Id = p.Id, Ts = p.Ts, UserId = p.UserId, Kind = p.Kind,
                 PackageId = p.PackageId, PackageName = p.PackageName, Tokens = p.Tokens,
                 Testers = p.Testers, Gross = p.Gross, Fee = p.Fee, Pool = p.Pool, InvoiceNo = p.InvoiceNo
-            }).ToListAsync());
+            }).ToListAsync();
 
-        var withdrawalsTask = QueryAsync(c => c.Withdrawals.AsNoTracking().OrderBy(w => w.RequestedAt)
+        var withdrawals = await db.Withdrawals.AsNoTracking().OrderBy(w => w.RequestedAt)
             .Select(w => new WithdrawalDto
             {
                 Id = w.Id, UserId = w.UserId, Amount = w.Amount, Status = w.Status,
                 RequestedAt = w.RequestedAt, ResolvedAt = w.ResolvedAt, Iban = w.Iban
-            }).ToListAsync());
-
-        await Task.WhenAll(
-            stateTask, ibansTask, usersTask, versionsTask, requestsTask,
-            sessionsTask, ledgerTask, cashTask, purchasesTask, withdrawalsTask);
-
-        var st = await stateTask;
+            }).ToListAsync();
 
         var shared = new StateDto
         {
@@ -135,17 +128,17 @@ public class StateService(BetakasDbContext db, IBetakasContextFactory factory, S
             Settings = new SettingsDto { TokenPrice = st.TokenPrice, FeePct = st.FeePct },
             SprintNo = st.SprintNo,
             Seq = st.Seq,
-            Users = await usersTask,
-            Versions = await versionsTask,
-            Requests = await requestsTask,
-            Sessions = await sessionsTask,
-            Ledger = await ledgerTask,
-            CashLedger = await cashTask,
-            Purchases = await purchasesTask,
-            Withdrawals = await withdrawalsTask,
+            Users = users,
+            Versions = versions,
+            Requests = requests,
+            Sessions = sessions,
+            Ledger = ledger,
+            CashLedger = cashLedger,
+            Purchases = purchases,
+            Withdrawals = withdrawals,
         };
 
-        return new StateSnapshot(shared, await ibansTask);
+        return new StateSnapshot(shared, ibans);
     }
 
     /// <summary>

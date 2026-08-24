@@ -49,12 +49,17 @@ public static class PostgresConnection
         if (isRemote && b.CommandTimeout < 60) b.CommandTimeout = 60;
 
         // Uzak veritabaninda her yeni baglanti TLS el sikismasi demektir; bir kac baglantiyi
-        // acik tutmak sayfa yuklemelerindeki ilk gecikmeyi ortadan kaldirir. State paralel
-        // toplandigi icin havuzun ayni anda ~10 baglantiyi karsilamasi gerekir.
+        // acik tutmak sayfa yuklemelerindeki ilk gecikmeyi ortadan kaldirir.
+        //
+        // Havuz boyutu KUCUK tutulur: Supabase'in session pooler'i istemci basina esamanli
+        // baglanti sayisini sinirlar (nano orneklerde 15) ve bu sinir projeye dokunan TUM
+        // sureclerde (yerel gelistirme, testler, birden fazla Vercel container ornegi)
+        // PAYLASILIR. Asilirsa "(EMAXCONNSESSION) max clients reached" hatasi alinir ve
+        // EF'in yeniden deneme gecikmeleri saniyeler suren istekler olarak geri doner.
         if (isRemote)
         {
-            if (b.MinPoolSize < 4) b.MinPoolSize = 4;
-            if (b.MaxPoolSize < 20) b.MaxPoolSize = 20;
+            if (b.MinPoolSize == 0) b.MinPoolSize = 1;
+            if (b.MaxPoolSize > 8) b.MaxPoolSize = 8; // Npgsql varsayılanı 100'dür — mutlaka düşürülmeli.
             if (b.KeepAlive == 0) b.KeepAlive = 30;
         }
 
