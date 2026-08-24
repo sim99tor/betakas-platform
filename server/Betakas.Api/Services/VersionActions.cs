@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json.Nodes;
 using Betakas.Api.Data;
 using Betakas.Api.Dto;
@@ -12,8 +11,6 @@ public class VersionActions(BetakasDbContext db, LedgerService ledger)
 {
     /// <summary>Bug tikinin alabileceği değerler; başka bir değer kabul edilmez.</summary>
     public static readonly string[] FixStates = ["fixed", "wip", "later", "norepro"];
-
-    private static readonly CultureInfo Tr = new("tr-TR");
 
     public async Task<DomainResult> CreateAsync(User me, CreateVersionDto dto)
     {

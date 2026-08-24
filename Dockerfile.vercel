@@ -32,6 +32,13 @@ RUN dotnet publish server/Betakas.Api/Betakas.Api.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine AS final
 WORKDIR /app
 
+# Alpine tabanli .NET imajlari varsayilan olarak "globalization invariant" modda calisir
+# (ICU kutuphaneleri yok): CultureInfo("tr-TR") gibi kultur-duyarli cagrilar
+# CultureNotFoundException firlatir. Turkce buyuk/kucuk harf donusumu (I/i, İ/ı) dogru
+# calissin diye ICU kutuphanesi kurulur ve invariant mod acikca kapatilir.
+RUN apk add --no-cache icu-libs
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+
 COPY --from=api /app/publish ./
 
 # Arayuz imajin icine kopyalanir; yeri Ui__Root ile acikca bildirilir.
